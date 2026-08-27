@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LaTeX → MathML Offline</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f5f6f8;color:#1d1f23}
+.wrap{max-width:1400px;margin:0 auto;padding:28px}h1{margin:0 0 8px;font-size:26px}
+.desc{margin:0 0 18px;color:#5f6670;line-height:1.5}.status{margin-bottom:16px;padding:10px 12px;border-radius:8px;background:#eaf7ee;border:1px solid #acd5b8;font-size:14px}
+.status.error{background:#fdecec;border-color:#e3abab}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px}
+button{border:0;border-radius:8px;padding:11px 16px;font-size:14px;cursor:pointer;background:#222;color:#fff}
+button.secondary{background:#e5e7eb;color:#222}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.card,.preview{background:#fff;border:1px solid #dfe2e6;border-radius:12px;padding:16px;min-width:0}
+.card h2,.preview h2{margin:0 0 10px;font-size:17px}textarea{width:100%;min-height:500px;resize:vertical;border:1px solid #cfd3d8;border-radius:8px;padding:12px;font-family:Consolas,"Courier New",monospace;font-size:13px;line-height:1.5}
+.preview{margin-top:18px}#previewBox{border:1px solid #e1e4e8;border-radius:8px;min-height:120px;padding:16px;overflow:auto;line-height:1.55;white-space:pre-wrap}
+.count{margin-left:auto;align-self:center;color:#5f6670;font-size:14px}code{background:#eef0f2;border-radius:4px;padding:2px 5px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}textarea{min-height:350px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>LaTeX → MathML — офлайн</h1>
+<p class="desc">Полностью автономная версия: не обращается к CDN и интернету. Ищет формулы между <code>$...$</code> и преобразует распространённый LaTeX в MathML.</p>
+<div id="status" class="status">Готово. Интернет не требуется.</div>
+<div class="actions">
+<button id="convertBtn">Преобразовать формулы</button>
+<button id="copyBtn" class="secondary">Скопировать результат</button>
+<button id="sampleBtn" class="secondary">Вернуть пример</button>
+<button id="clearBtn" class="secondary">Очистить</button>
+<span id="count" class="count">Формул: 0</span>
+</div>
+<div class="grid">
+<div class="card"><h2>1. Исходный текст</h2><textarea id="input"></textarea></div>
+<div class="card"><h2>2. Результат с MathML</h2><textarea id="output" readonly></textarea></div>
+</div>
+<div class="preview"><h2>Предпросмотр</h2><div id="previewBox"></div></div>
+</div>
+
+<script>
+const sampleText=String.raw`Нейронным сетям намного проще работать с нормализованными данными.
+
+**Шаг 1. Поиск среднего значения ($\bar{x}$)**
+
+Складываем все числа и делим результат на их количество:
+
+$\bar{x} = \frac{1 + 0 + 3 + 2 + 4}{5} = \frac{10}{5} = 2$
+
+где $\bar{x}$ — среднее значение.
+
+**Шаг 2. Поиск дисперсии ($\sigma^2$) и стандартного отклонения ($\sigma$)**
+
+Формула дисперсии:
+
+$\sigma^2 = \frac{\sum (x_i - \bar{x})^2}{n}$
+
+где:
+- $\sigma^2$ — дисперсия,
+- $x_i$ — текущее число,
+- $\bar{x}$ — среднее значение,
+- $n$ — количество элементов.`;
+
+const input=document.getElementById('input'), output=document.getElementById('output'),
+preview=document.getElementById('previewBox'), statusBox=document.getElementById('status'),
+countBox=document.getElementById('count');
+input.value=sampleText;
+
+const greek={
+alpha:'α',beta:'β',gamma:'γ',delta:'δ',epsilon:'ϵ',varepsilon:'ε',zeta:'ζ',eta:'η',theta:'θ',vartheta:'ϑ',
+iota:'ι',kappa:'κ',lambda:'λ',mu:'μ',nu:'ν',xi:'ξ',omicron:'ο',pi:'π',varpi:'ϖ',rho:'ρ',varrho:'ϱ',
+sigma:'σ',varsigma:'ς',tau:'τ',upsilon:'υ',phi:'ϕ',varphi:'φ',chi:'χ',psi:'ψ',omega:'ω',
+Gamma:'Γ',Delta:'Δ',Theta:'Θ',Lambda:'Λ',Xi:'Ξ',Pi:'Π',Sigma:'Σ',Upsilon:'Υ',Phi:'Φ',Psi:'Ψ',Omega:'Ω'
+};
+const ops={
+sum:'∑',prod:'∏',coprod:'∐',int:'∫',iint:'∬',iiint:'∭',oint:'∮',
+infty:'∞',pm:'±',mp:'∓',times:'×',div:'÷',cdot:'⋅',ast:'∗',
+le:'≤',leq:'≤',ge:'≥',geq:'≥',ne:'≠',neq:'≠',approx:'≈',equiv:'≡',
+to:'→',rightarrow:'→',leftarrow:'←',leftrightarrow:'↔',Rightarrow:'⇒',Leftarrow:'⇐',Leftrightarrow:'⇔',
+in:'∈',notin:'∉',subset:'⊂',subseteq:'⊆',supset:'⊃',supseteq:'⊇',cup:'∪',cap:'∩',
+forall:'∀',exists:'∃',partial:'∂',nabla:'∇',angle:'∠',degree:'°'
+};
+
+function esc(s){return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;')}
+function mi(s){return `<mi>${esc(s)}</mi>`}
+function mn(s){return `<mn>${esc(s)}</mn>`}
+function mo(s){return `<mo>${esc(s)}</mo>`}
+function mrow(s){return `<mrow>${s}</mrow>`}
+
+class Parser{
+  constructor(s){this.s=s;this.i=0}
+  peek(){return this.s[this.i]}
+  eat(){return this.s[this.i++]}
+  skip(){while(/\s/.test(this.peek()||''))this.i++}
+  parse(stop=null){
+    let out='';
+    while(this.i<this.s.length){
+      this.skip();
+      if(stop && this.peek()===stop){this.i++;break}
+      if(this.i>=this.s.length)break;
+      let atom=this.atom();
+      atom=this.scripts(atom);
+      out+=atom;
+    }
+    return out;
+  }
+  group(){
+    this.skip();
+    if(this.peek()==='{'){this.i++;return mrow(this.parse('}'))}
+    return this.scripts(this.atom());
+  }
+  rawGroup(){
+    this.skip();
+    if(this.peek()!=='{')return '';
+    this.i++; let d=1,start=this.i;
+    while(this.i<this.s.length && d){
+      if(this.s[this.i]==='{')d++;
+      else if(this.s[this.i]==='}')d--;
+      this.i++;
+    }
+    return this.s.slice(start,this.i-1);
+  }
+  command(){
+    this.i++;
+    let name='';
+    while(/[A-Za-z]/.test(this.peek()||''))name+=this.eat();
+    if(!name && this.i<this.s.length)name=this.eat();
+
+    if(name==='left'||name==='right'){this.skip(); return this.atom()}
+    if(name==='frac'){let a=this.group(),b=this.group();return `<mfrac>${a}${b}</mfrac>`}
+    if(name==='sqrt'){
+      this.skip();
+      let idx='';
+      if(this.peek()==='['){this.i++;let st=this.i;while(this.i<this.s.length&&this.peek()!==']')this.i++;idx=this.s.slice(st,this.i++);}
+      let a=this.group(); return idx?`<mroot>${a}${mrow(this.inlineSimple(idx))}</mroot>`:`<msqrt>${a}</msqrt>`
+    }
+    if(name==='bar'||name==='overline'){let a=this.group();return `<mover>${a}<mo stretchy="false">¯</mo></mover>`}
+    if(name==='vec'){let a=this.group();return `<mover>${a}<mo stretchy="false">→</mo></mover>`}
+    if(name==='hat'){let a=this.group();return `<mover>${a}<mo stretchy="false">^</mo></mover>`}
+    if(name==='tilde'){let a=this.group();return `<mover>${a}<mo stretchy="false">~</mo></mover>`}
+    if(name==='underline'){let a=this.group();return `<munder>${a}<mo>_</mo></munder>`}
+    if(name==='text'||name==='mathrm'||name==='operatorname'){let t=this.rawGroup();return name==='text'?`<mtext>${esc(t)}</mtext>`:`<mi mathvariant="normal">${esc(t)}</mi>`}
+    if(name==='mathbf'||name==='boldsymbol'){let a=this.group();return `<mstyle mathvariant="bold">${a}</mstyle>`}
+    if(name==='mathbb'){let a=this.group();return `<mstyle mathvariant="double-struck">${a}</mstyle>`}
+    if(name==='mathcal'){let a=this.group();return `<mstyle mathvariant="script">${a}</mstyle>`}
+    if(greek[name])return mi(greek[name]);
+    if(ops[name]){
+      const big=['sum','prod','coprod','int','iint','iiint','oint'].includes(name);
+      return `<mo${big?' movablelimits="true"':''}>${ops[name]}</mo>`;
+    }
+    if([',',';','!',' ','quad','qquad'].includes(name))return '<mspace width="0.3em"></mspace>';
+    return mi('\\'+name);
+  }
+  inlineSimple(s){let p=new Parser(s);return p.parse()}
+  atom(){
+    this.skip(); let c=this.peek();
+    if(c==='\\')return this.command();
+    if(c==='{'){this.i++;return mrow(this.parse('}'))}
+    if(/[0-9.]/.test(c||'')){
+      let n='';while(/[0-9.]/.test(this.peek()||''))n+=this.eat();return mn(n)
+    }
+    if(/[A-Za-z]/.test(c||'')){return mi(this.eat())}
+    if(c==='('||c===')'||c==='['||c===']'||c==='|'||c==='{'||c==='}')return mo(this.eat());
+    if(c==='+')return mo(this.eat());
+    if(c==='-'){this.i++;return mo('−')}
+    if(c==='=')return mo(this.eat());
+    if(c==='*')return mo(this.eat());
+    if(c==='/')return mo(this.eat());
+    if(c===',')return mo(this.eat());
+    if(c===':')return mo(this.eat());
+    if(c==='&'){this.i++;return mo('&')}
+    if(c){this.i++;return mi(c)}
+    return '';
+  }
+  scripts(base){
+    this.skip(); let sub=null,sup=null;
+    while(this.peek()==='_'||this.peek()==='^'){
+      let t=this.eat(),v=this.group();
+      if(t==='_')sub=v; else sup=v;
+      this.skip();
+    }
+    if(sub&&sup)return `<msubsup>${base}${sub}${sup}</msubsup>`;
+    if(sub)return `<msub>${base}${sub}</msub>`;
+    if(sup)return `<msup>${base}${sup}</msup>`;
+    return base;
+  }
+}
+
+function latexToMathML(latex){
+  const parser=new Parser(latex);
+  const body=parser.parse();
+  return `<math xmlns="http://www.w3.org/1998/Math/MathML" display="block" data-fr-type="latex" class="fr-mml-formula">${body}</math>`;
+}
+
+function formulas(text){
+  let arr=[],i=0;
+  while(i<text.length){
+    if(text[i]!=='$'||(i>0&&text[i-1]==='\\')){i++;continue}
+    let dbl=text[i+1]==='$',start=i,j=i+(dbl?2:1);
+    while(j<text.length){
+      if(dbl && text[j]==='$'&&text[j+1]==='$')break;
+      if(!dbl && text[j]==='$'&&text[j-1]!=='\\')break;
+      j++;
+    }
+    if(j>=text.length){i++;continue}
+    let end=dbl?j+2:j+1;
+    arr.push({start,end,latex:text.slice(i+(dbl?2:1),j)});
+    i=end;
+  }
+  return arr;
+}
+function setStatus(t,error=false){statusBox.textContent=t;statusBox.className='status'+(error?' error':'')}
+function escapeNonMath(text){
+  return text.split(/(<math\b[\s\S]*?<\/math>)/gi).map(x=>{
+    if(/^<math\b/i.test(x))return x;
+    return esc(x).replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>');
+  }).join('');
+}
+function convert(){
+  try{
+    const text=input.value,fs=formulas(text); let out='',cur=0,errors=0;
+    for(const f of fs){
+      out+=text.slice(cur,f.start);
+      try{out+=latexToMathML(f.latex.trim())}catch(e){out+=text.slice(f.start,f.end);errors++}
+      cur=f.end;
+    }
+    out+=text.slice(cur); output.value=out; countBox.textContent='Формул: '+fs.length;
+    preview.innerHTML=escapeNonMath(out);
+    setStatus(errors?`Готово, но ${errors} формул оставлены без изменений.`:`Готово. Преобразовано формул: ${fs.length}`,errors>0);
+  }catch(e){setStatus('Ошибка: '+e.message,true)}
+}
+document.getElementById('convertBtn').onclick=convert;
+document.getElementById('sampleBtn').onclick=()=>{input.value=sampleText;output.value='';preview.innerHTML='';countBox.textContent='Формул: 0';setStatus('Готово. Интернет не требуется.')};
+document.getElementById('clearBtn').onclick=()=>{input.value='';output.value='';preview.innerHTML='';countBox.textContent='Формул: 0'};
+document.getElementById('copyBtn').onclick=async()=>{if(!output.value)return;try{await navigator.clipboard.writeText(output.value)}catch{output.select();document.execCommand('copy')}setStatus('Результат скопирован.')};
+</script>
+</body>
+</html>
